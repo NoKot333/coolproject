@@ -1,10 +1,15 @@
 import express from 'express';
+import multer from 'multer';
 import jwt from 'jsonwebtoken';
 import mongoose, { model } from 'mongoose';
-import { validationResult } from 'express-validator';
-import {registerValidation} from './validations/auth.js';
-import UserModel from './models/User.js'
-import bcrypt, { hash } from 'bcrypt';
+import {registerValidation,loginValidation, postCreateValidation} from './validation.js';
+
+import CheckAuth from './Utils/CheckAuth.js'
+
+import * as UserController from './controllers/UserController.js';
+import * as PostController from './controllers/PostController.js';
+
+mongoose.set("strictQuery", true);
 mongoose
     .connect('mongodb+srv://admin:admin@cluster0.zukeyqg.mongodb.net/blog?retryWrites=true&w=majority')
     .then(()=> console.log('DB ok'))
@@ -12,97 +17,35 @@ mongoose
 
 const app = express();
 
+const storage = multer.diskStorage( {
+    destination: (_,__,cb)=> {
+        cb(null,'uploads'); 
+    },
+    filename: (_,file,cb)=> {
+        cb(null,file.originalname); 
+    },
+});
+
+const upload = multer({storage});
+
 app.use(express.json());
 
-app.post('/auth/login',async (req,res)=> {
-try {
-    const user = await UserModel.findOne( { email: req.body.email});
-    if (!user) {
-        return res.status(404).json({
-            message: 'Пользователь не найден',
-        });
-    }
+app.post('/auth/login', loginValidation , UserController.login);
+app.post('/auth/register',registerValidation, UserController.register);
 
-    const isValidPass = await bcrypt.compare(req.body.password,user._doc.passwordHash);
-    if (!isValidPass) {
-        return res.status(404).json({
-            message: 'Неверный логин или пароль',
-        });
-    }
-
-    const token = jwt.sign(
-        {
-            _id: user._id,
-        },
-        'cipher',
-        {
-            expiresIn:'30d',
-        },
-    );
-
-    const { passwordHash, ...userData} = user._doc;
-
-    res.json( {
-        ...userData,
-        token
+app.post('/upload',CheckAuth, upload.single('image'),(req,res)=> {
+    res.json({
+        url: `uploads/${req.file.originalfilename}`,
     });
-
-} catch (err) {
-    console.log(err);
-    res.status(500).json({
-        message:'Произошла неизвестная ошибка',
-    });
-}
 });
 
-app.post('/auth/register',registerValidation,async (req,res) => {
-    try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json(errors.array());
-    }
+app.get('/auth/me',CheckAuth, UserController.getMe);
+app.get('/posts', CheckAuth, PostController.getAll)
+app.get('/posts/:id', CheckAuth, PostController.getOne)
+app.post('/posts', CheckAuth, postCreateValidation, PostController.create)
+app.delete('/posts/:id', CheckAuth, PostController.removeOne)
+app.patch('/posts/:id', CheckAuth, PostController.updateOne)
 
-    const password = req.body.password;
-    const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(password,salt);
-
-    const doc = new UserModel( {
-        email: req.body.email,
-        fullName: req.body.fullName,
-        avatarUrl: req.body.avatarUrl,
-        passwordHash : hash,
-    });
-
-    const user = await doc.save();
-    const token = jwt.sign({
-        _id: user._id,
-    }, 'cipher',
-    {
-        expiresIn: '30d',
-        },
-    );
-
-    const { passwordHash, ...userData} = user._doc;
-
-    res.json( {
-        ...userData,
-        token
-    });
-    } catch (err) {
-        console.log(err);
-        res.status(500).json( {
-            message: 'Ошибка во время регистрации'
-        });
-    }
-});
-
-app.get('/auth/me', (req,res) => {
-    try {
-        
-    } catch (err) {
-
-    }
-})
 
 app.listen(4444, (err) => {
     if (err) {
